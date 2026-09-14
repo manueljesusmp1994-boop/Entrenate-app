@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Entrena</title>
+<link rel="manifest" href="./manifest.json" />
+<link rel="icon" href="./icon-192.png" />
+<link rel="apple-touch-icon" href="./icon-192.png" />
+<meta name="theme-color" content="#24344D" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Entrena" />
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  body { -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+/** @jsxRuntime classic */
+const { useState, useEffect, useMemo } = React;
+
+// ---------- Constantes ----------
+const DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+const TIPOS_BASE = ["Correr", "Entrenamiento con pesas", "Crosstraining"];
+
+const ZONAS = [
+  { id: 1, nombre: "Zona 1 · Recuperación", min: 0.5, max: 0.6, color: "#3B82A6", beneficio: "Activa la circulación y acelera la recuperación entre sesiones exigentes." },
+  { id: 2, nombre: "Zona 2 · Base aeróbica", min: 0.6, max: 0.7, color: "#4FA37C", beneficio: "Construye resistencia de base y mejora el uso de grasa como combustible." },
+  { id: 3, nombre: "Zona 3 · Aeróbico", min: 0.7, max: 0.8, color: "#D9A441", beneficio: "Mejora la capacidad cardiovascular y la eficiencia respiratoria." },
+  { id: 4, nombre: "Zona 4 · Umbral", min: 0.8, max: 0.9, color: "#E07A3F", beneficio: "Aumenta la tolerancia al lactato y la velocidad sostenible." },
+  { id: 5, nombre: "Zona 5 · Máximo", min: 0.9, max: 1.0, color: "#C1443C", beneficio: "Desarrolla la potencia máxima y el consumo máximo de oxígeno (VO2max)." },
+];
+
+const STORAGE_KEY = "entrena-app-data";
+
+// ---------- Utilidades de fecha ----------
+function lunesDeLaSemana(fecha) {
+  const d = new Date(fecha);
+  const dia = d.getDay();
+  const diff = d.getDate() - (dia === 0 ? 6 : dia - 1);
+  const l = new Date(d.setDate(diff));
+  l.setHours(0, 0, 0, 0);
+  return l;
+}
+function formatearISO(d) { return new Date(d).toISOString().slice(0, 10); }
+function sumarDias(fecha, n) { const d = new Date(fecha); d.setDate(d.getDate() + n); return d; }
+function formatearCorto(fecha) { return new Date(fecha).toLocaleDateString("es-ES", { day: "2-digit", month: "short" }); }
+function claveSemana(fecha) { return formatearISO(lunesDeLaSemana(fecha)); }
+function claveMes(fechaISO) { return fechaISO.slice(0, 7); }
+function nombreMes(claveMes_) {
+  const [y, m] = claveMes_.split("-");
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("es-ES", { month: "short", year: "2-digit" });
+}
+function uid() { return Math.random().toString(36).slice(2, 10); }
+
+// ---------- Cálculos ----------
+function calcularIMC(peso, alturaCm) {
+  if (!peso || !alturaCm) return null;
+  const alturaM = alturaCm / 100;
+  return peso / (alturaM * alturaM);
+}
+function categoriaIMC(imc) {
+  if (imc == null) return { texto: "—", color: "#9A968C" };
+  if (imc < 18.5) return { texto: "Bajo peso", color: "#3B82A6" };
+  if (imc < 25) return { texto: "Normal", color: "#4FA37C" };
+  if (imc < 30) return { texto: "Sobrepeso", color: "#D9A441" };
+  return { texto: "Obesidad", color: "#C1443C" };
+}
+function frecuenciaMaxima(edad) { return 220 - edad; }
+
+// ---------- Persistencia (localStorage) ----------
+function cargarEstadoInicial() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return null;
+}
+
+// ---------- Iconos (emoji, sin dependencias externas) ----------
+function Ic({ children, size = 14, style }) {
+  return <span style={{ fontSize: size, lineHeight: 1, display: "inline-flex", ...style }}>{children}</span>;
+}
+
+// ---------- Gráficas propias en SVG ----------
+function GraficaBarras({ datos, claveX, claveY, color, alto = 200 }) {
+  if (!datos.length) return null;
+  const max = Math.max(1, ...datos.map((d) => d[claveY]));
+  const anchoTotal = datos.length * 64;
+  return (
+    <svg viewBox={`0 0 ${anchoTotal} ${alto}`} width="100%" height={alto} preserveAspectRatio="none">
+      {datos.map((d, i) => {
+        const h = (d[claveY] / max) * (alto - 34);
+        const x = i * 64 + 12;
+        const barW = 40;
+        return (
+          <g key={i}>
+            <rect x={x} y={alto - 26 - h} width={barW} height={Math.max(h, 1)} fill={color} rx={3} />
+            <text x={x + barW / 2} y={alto - 26 - h - 6} fontSize="11" textAnchor="middle" fill="#14181A">{d[claveY]}</text>
+            <text x={x + barW / 2} y={alto - 8} fontSize="10" textAnchor="middle" fill="#63645D">{d[claveX]}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+function GraficaLineas({ datos, claveX, claveY, color, alto = 200 }) {
+  if (datos.length < 2) return null;
+  const max = Math.max(...datos.map((d) => d[claveY]));
+  const min = Math.min(...datos.map((d) => d[claveY]));
+  const rango = max - min || 1;
+  const anchoTotal = Math.max(300, datos.length * 64);
+  const puntos = datos.map((d, i) => ({
+    x: (i / (datos.length - 1)) * (anchoTotal - 40) + 20,
+    y: alto - 28 - ((d[claveY] - min) / rango) * (alto - 60),
+    valor: d[claveY], etiqueta: d[claveX],
+  }));
+  const path = puntos.map((p, i) => (i === 0 ? "M" : "L") + p.x + "," + p.y).join(" ");
+  return (
+    <svg viewBox={`0 0 ${anchoTotal} ${alto}`} width="100%" height={alto} preserveAspectRatio="none">
+      <path d={path} fill="none" stroke={color} strokeWidth="2.5" />
+      {puntos.map((p, i) => (
+        <g key={i}>
+          <circle cx={p.x} cy={p.y} r="3.5" fill={color} />
+          <text x={p.x} y={p.y - 10} fontSize="10" textAnchor="middle" fill="#14181A">{p.valor}</text>
+          <text x={p.x} y={alto - 8} fontSize="9" textAnchor="middle" fill="#63645D">{p.etiqueta}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// ---------- Componente principal ----------
+function EntrenaApp() {
+  const inicial = useMemo(cargarEstadoInicial, []);
+  const [usuarios, setUsuarios] = useState((inicial && inicial.usuarios) || []);
+  const [usuarioActualId, setUsuarioActualId] = useState((inicial && inicial.usuarioActualId) || null);
+  const [tiposEntreno, setTiposEntreno] = useState((inicial && inicial.tiposEntreno && inicial.tiposEntreno.length) ? inicial.tiposEntreno : TIPOS_BASE);
+  const [datosUsuarios, setDatosUsuarios] = useState((inicial && inicial.datosUsuarios) || {});
+  const [pestaña, setPestaña] = useState("perfil");
+  const [avisoAlmacenamiento, setAvisoAlmacenamiento] = useState(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ usuarios, usuarioActualId, tiposEntreno, datosUsuarios }));
+      setAvisoAlmacenamiento(null);
+    } catch (e) {
+      setAvisoAlmacenamiento("No se pudo guardar. Puede que el almacenamiento esté lleno.");
+    }
+  }, [usuarios, usuarioActualId, tiposEntreno, datosUsuarios]);
+
+  const usuarioActual = usuarios.find((u) => u.id === usuarioActualId) || null;
+  const datosActuales = usuarioActualId ? (datosUsuarios[usuarioActualId] || { planes: {}, registros: [], pesos: [] }) : null;
+
+  function actualizarDatosUsuario(id, actualizador) {
+    setDatosUsuarios((prev) => {
+      const actual = prev[id] || { planes: {}, registros: [], pesos: [] };
+      return { ...prev, [id]: actualizador(actual) };
+    });
+  }
+  function crearUsuario(nombre) {
+    const nuevo = { id: uid(), nombre, edad: 30, genero: "otro", altura: 170, peso: 70 };
+    setUsuarios((prev) => [...prev, nuevo]);
+    setDatosUsuarios((prev) => ({ ...prev, [nuevo.id]: { planes: {}, registros: [], pesos: [{ fecha: formatearISO(new Date()), peso: 70 }] } }));
+    setUsuarioActualId(nuevo.id);
+    setPestaña("perfil");
+  }
+  function eliminarUsuario(id) {
+    setUsuarios((prev) => prev.filter((u) => u.id !== id));
+    setDatosUsuarios((prev) => { const c = { ...prev }; delete c[id]; return c; });
+    if (usuarioActualId === id) setUsuarioActualId(null);
+  }
+  function actualizarPerfil(campos) {
+    if (!usuarioActual) return;
+    setUsuarios((prev) => prev.map((u) => (u.id === usuarioActual.id ? { ...u, ...campos } : u)));
+    if (campos.peso && campos.peso !== usuarioActual.peso) {
+      actualizarDatosUsuario(usuarioActual.id, (d) => ({ ...d, pesos: [...d.pesos, { fecha: formatearISO(new Date()), peso: campos.peso }] }));
+    }
+  }
+
+  return (
+    <div style={styles.appShell}>
+      <EstiloGlobal />
+      <Sidebar usuarios={usuarios} usuarioActualId={usuarioActualId} setUsuarioActualId={setUsuarioActualId}
+        crearUsuario={crearUsuario} pestaña={pestaña} setPestaña={setPestaña} />
+      <main style={styles.main}>
+        {avisoAlmacenamiento && <div style={styles.bannerError}>{avisoAlmacenamiento}</div>}
+        {!usuarioActual ? (
+          <PantallaSinUsuario crearUsuario={crearUsuario} />
+        ) : (
+          <>
+            {pestaña === "perfil" && <VistaPerfil usuario={usuarioActual} actualizarPerfil={actualizarPerfil} eliminarUsuario={eliminarUsuario} />}
+            {pestaña === "plan" && <VistaPlanificacion usuario={usuarioActual} datos={datosActuales} tiposEntreno={tiposEntreno} actualizarDatosUsuario={actualizarDatosUsuario} />}
+            {pestaña === "entrenamientos" && <VistaEntrenamientos usuario={usuarioActual} datos={datosActuales} tiposEntreno={tiposEntreno} setTiposEntreno={setTiposEntreno} actualizarDatosUsuario={actualizarDatosUsuario} />}
+            {pestaña === "progreso" && <VistaProgreso usuario={usuarioActual} datos={datosActuales} />}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+// ---------- Tokens de diseño ----------
+const TOKENS = { fondo: "#F2F1EC", panel: "#FFFFFF", linea: "#DEDAD0", tinta: "#14181A", tintaSuave: "#63645D", acento: "#24344D", acentoSuave: "#EDEEE9" };
+
+function EstiloGlobal() {
+  return (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;900&family=Inter:wght@400;500;600&display=swap');
+      * { box-sizing: border-box; }
+      .num { font-family: 'Big Shoulders Display', sans-serif; }
+      input, select { font-family: 'Inter', sans-serif; }
+      input:focus, select:focus, button:focus-visible { outline: 2px solid ${TOKENS.acento}; outline-offset: 1px; }
+      button { cursor: pointer; font-family: 'Inter', sans-serif; }
+      body { background: ${TOKENS.fondo}; }
+      @media (max-width: 760px) {
+        .app-shell { flex-direction: column; }
+        .app-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid ${TOKENS.linea}; flex-direction: row !important; flex-wrap: wrap; gap: 8px; }
+      }
+    `}</style>
+  );
+}
+
+const styles = {
+  appShell: { display: "flex", minHeight: "100vh", background: TOKENS.fondo, fontFamily: "'Inter', sans-serif", color: TOKENS.tinta },
+  main: { flex: 1, padding: "28px 20px 60px", minWidth: 0 },
+  bannerError: { background: "#FBE9E7", border: `1px solid ${ZONAS[4].color}`, color: "#7A2E27", padding: "10px 14px", borderRadius: 4, marginBottom: 20, fontSize: 14 },
+};
+
+// ---------- Sidebar ----------
+function Sidebar({ usuarios, usuarioActualId, setUsuarioActualId, crearUsuario, pestaña, setPestaña }) {
+  const [creando, setCreando] = useState(false);
+  const [nombre, setNombre] = useState("");
+  const items = [
+    { id: "perfil", label: "Perfil", icon: "👤" },
+    { id: "plan", label: "Planificación", icon: "📅" },
+    { id: "entrenamientos", label: "Entrenamientos", icon: "🏋" },
+    { id: "progreso", label: "Progreso", icon: "📈" },
+  ];
+  return (
+    <aside className="app-sidebar" style={{ width: 232, borderRight: `1px solid ${TOKENS.linea}`, padding: "24px 18px", display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "0 6px 20px" }}>
+        <span className="num" style={{ fontSize: 24, fontWeight: 900 }}>Entrena</span>
+      </div>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 11, color: TOKENS.tintaSuave, padding: "0 6px 8px", display: "flex", alignItems: "center", gap: 6 }}>
+          <Ic size={13}>👥</Ic> Usuarios
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {usuarios.map((u) => (
+            <button key={u.id} onClick={() => setUsuarioActualId(u.id)} style={{
+              textAlign: "left", padding: "8px 10px", borderRadius: 4, border: "none",
+              background: u.id === usuarioActualId ? TOKENS.acento : "transparent",
+              color: u.id === usuarioActualId ? "#fff" : TOKENS.tinta, fontSize: 14, fontWeight: 500,
+            }}>{u.nombre}</button>
+          ))}
+        </div>
+        {creando ? (
+          <div style={{ display: "flex", gap: 4, marginTop: 6, padding: "0 6px" }}>
+            <input autoFocus value={nombre} onChange={(e) => setNombre(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && nombre.trim()) { crearUsuario(nombre.trim()); setNombre(""); setCreando(false); } if (e.key === "Escape") setCreando(false); }}
+              placeholder="Nombre" style={{ flex: 1, minWidth: 0, padding: "6px 8px", border: `1px solid ${TOKENS.linea}`, borderRadius: 4, fontSize: 13 }} />
+            <button type="button" onClick={() => { if (nombre.trim()) { crearUsuario(nombre.trim()); setNombre(""); setCreando(false); } }}
+              style={{ background: TOKENS.acento, color: "#fff", border: "none", borderRadius: 4, padding: "0 8px" }}><Ic size={14}>✓</Ic></button>
+            <button type="button" onClick={() => setCreando(false)} style={{ background: "transparent", border: "none", color: TOKENS.tintaSuave }}><Ic size={14}>×</Ic></button>
+          </div>
+        ) : (
+          <button onClick={() => setCreando(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", background: "transparent", border: "none", color: TOKENS.tintaSuave, fontSize: 13, marginTop: 4 }}>
+            <Ic size={14}>＋</Ic> Añadir usuario
+          </button>
+        )}
+      </div>
+      <nav style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 8 }}>
+        {items.map(({ id, label, icon }) => (
+          <button key={id} onClick={() => setPestaña(id)} disabled={usuarios.length === 0} style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 4, border: "none",
+            background: pestaña === id ? TOKENS.acentoSuave : "transparent", color: pestaña === id ? TOKENS.acento : TOKENS.tinta,
+            fontWeight: pestaña === id ? 600 : 500, fontSize: 14, opacity: usuarios.length === 0 ? 0.4 : 1,
+          }}><Ic size={16}>{icon}</Ic> {label}</button>
+        ))}
+      </nav>
+    </aside>
+  );
+}
+
+function PantallaSinUsuario({ crearUsuario }) {
+  const [nombre, setNombre] = useState("");
+  return (
+    <div style={{ maxWidth: 420, marginTop: 60 }}>
+      <h1 className="num" style={{ fontSize: 34, fontWeight: 700, margin: "0 0 8px" }}>Empieza por crear un usuario</h1>
+      <p style={{ color: TOKENS.tintaSuave, fontSize: 15, lineHeight: 1.5, margin: "0 0 20px" }}>Cada usuario tiene su propio perfil, planificación y registro de entrenamientos.</p>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input autoFocus value={nombre} onChange={(e) => setNombre(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && nombre.trim()) crearUsuario(nombre.trim()); }}
+          placeholder="Nombre del usuario" style={{ flex: 1, padding: "10px 12px", border: `1px solid ${TOKENS.linea}`, borderRadius: 4, fontSize: 15 }} />
+        <button type="button" onClick={() => { if (nombre.trim()) crearUsuario(nombre.trim()); }}
+          style={{ background: TOKENS.acento, color: "#fff", border: "none", borderRadius: 4, padding: "0 18px", fontSize: 14, fontWeight: 600 }}>Crear</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Vista: Perfil ----------
+function VistaPerfil({ usuario, actualizarPerfil, eliminarUsuario }) {
+  const [form, setForm] = useState(usuario);
+  useEffect(() => setForm(usuario), [usuario.id]);
+  function campo(clave, valor) { setForm({ ...form, [clave]: valor }); }
+  function guardar() { actualizarPerfil({ nombre: form.nombre, edad: Number(form.edad), genero: form.genero, altura: Number(form.altura), peso: Number(form.peso) }); }
+  const imc = calcularIMC(Number(usuario.peso), Number(usuario.altura));
+  const cat = categoriaIMC(imc);
+  const hrMax = frecuenciaMaxima(Number(usuario.edad) || 0);
+  return (
+    <div style={{ maxWidth: 760 }}>
+      <Encabezado titulo="Perfil" subtitulo={`Datos de ${usuario.nombre}`} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
+        <CampoTexto label="Nombre" value={form.nombre} onChange={(v) => campo("nombre", v)} />
+        <CampoSelect label="Género" value={form.genero} onChange={(v) => campo("genero", v)} opciones={[{ v: "mujer", t: "Mujer" }, { v: "hombre", t: "Hombre" }, { v: "otro", t: "Otro" }]} />
+        <CampoNumero label="Edad (años)" value={form.edad} onChange={(v) => campo("edad", v)} />
+        <CampoNumero label="Altura (cm)" value={form.altura} onChange={(v) => campo("altura", v)} />
+        <CampoNumero label="Peso (kg)" value={form.peso} onChange={(v) => campo("peso", v)} step="0.1" />
+      </div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 32, flexWrap: "wrap" }}>
+        <button onClick={guardar} style={boton.primario}>Guardar cambios</button>
+        <button onClick={() => { if (confirm(`¿Eliminar a ${usuario.nombre} y todos sus datos?`)) eliminarUsuario(usuario.id); }} style={boton.peligro}>
+          <Ic size={14} style={{ marginRight: 6 }}>🗑</Ic> Eliminar usuario
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
+        <Panel>
+          <div style={{ fontSize: 12, color: TOKENS.tintaSuave, marginBottom: 6 }}>Índice de masa corporal</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <span className="num" style={{ fontSize: 44, fontWeight: 700 }}>{imc ? imc.toFixed(1) : "—"}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: cat.color }}>{cat.texto}</span>
+          </div>
+          <div style={{ fontSize: 12, color: TOKENS.tintaSuave, marginTop: 8, lineHeight: 1.5 }}>Bajo peso &lt;18.5 · Normal 18.5–24.9 · Sobrepeso 25–29.9 · Obesidad ≥30</div>
+        </Panel>
+        <Panel>
+          <div style={{ fontSize: 12, color: TOKENS.tintaSuave, marginBottom: 6 }}>Frecuencia cardiaca máxima estimada</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+            <span className="num" style={{ fontSize: 44, fontWeight: 700 }}>{hrMax}</span>
+            <span style={{ fontSize: 13, color: TOKENS.tintaSuave }}>ppm</span>
+          </div>
+          <div style={{ fontSize: 12, color: TOKENS.tintaSuave, marginTop: 8 }}>Calculada como 220 − edad</div>
+        </Panel>
+      </div>
+      <div style={{ fontSize: 12, color: TOKENS.tintaSuave, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><Ic size={13}>❤</Ic> Zonas de frecuencia cardiaca</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {ZONAS.map((z) => {
+          const desde = Math.round(hrMax * z.min), hasta = Math.round(hrMax * z.max);
+          return (
+            <div key={z.id} style={{ display: "flex", alignItems: "center", gap: 14, background: TOKENS.panel, border: `1px solid ${TOKENS.linea}`, borderRadius: 4, padding: "12px 16px", flexWrap: "wrap" }}>
+              <div style={{ width: 10, height: 40, background: z.color, borderRadius: 2, flexShrink: 0 }} />
+              <div style={{ width: 150, flexShrink: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{z.nombre}</div>
+                <div className="num" style={{ fontSize: 18, fontWeight: 700, color: z.color }}>{desde}–{hasta} ppm</div>
+              </div>
+              <div style={{ fontSize: 13, color: TOKENS.tintaSuave, lineHeight: 1.4 }}>{z.beneficio}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Vista: Planificación semanal ----------
+function VistaPlanificacion({ usuario, datos, tiposEntreno, actualizarDatosUsuario }) {
+  const [refFecha, setRefFecha] = useState(new Date());
+  const lunes = lunesDeLaSemana(refFecha);
+  const clave = claveSemana(refFecha);
+  const plan = (datos.planes && datos.planes[clave]) || {};
+  function fijarDia(diaIdx, tipo) {
+    actualizarDatosUsuario(usuario.id, (d) => {
+      const planes = { ...d.planes };
+      const semana = { ...(planes[clave] || {}) };
+      if (tipo) semana[diaIdx] = tipo; else delete semana[diaIdx];
+      planes[clave] = semana;
+      return { ...d, planes };
+    });
+  }
+  return (
+    <div style={{ maxWidth: 900 }}>
+      <Encabezado titulo="Planificación semanal" subtitulo={`Plan de ${usuario.nombre}`} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+        <button onClick={() => setRefFecha(sumarDias(lunes, -7))} style={boton.icono}><Ic size={16}>‹</Ic></button>
+        <div className="num" style={{ fontSize: 16, fontWeight: 700, minWidth: 200, textAlign: "center" }}>{formatearCorto(lunes)} – {formatearCorto(sumarDias(lunes, 6))}</div>
+        <button onClick={() => setRefFecha(sumarDias(lunes, 7))} style={boton.icono}><Ic size={16}>›</Ic></button>
+        <button onClick={() => setRefFecha(new Date())} style={{ ...boton.secundario, marginLeft: 8, fontSize: 12, padding: "6px 12px" }}>Esta semana</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+        {DIAS.map((dia, idx) => (
+          <div key={dia} style={{ background: TOKENS.panel, border: `1px solid ${TOKENS.linea}`, borderRadius: 4, padding: 12, minHeight: 120 }}>
+            <div style={{ fontSize: 11, color: TOKENS.tintaSuave, marginBottom: 2 }}>{dia}</div>
+            <div className="num" style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>{formatearCorto(sumarDias(lunes, idx))}</div>
+            <select value={plan[idx] || ""} onChange={(e) => fijarDia(idx, e.target.value)}
+              style={{ width: "100%", fontSize: 12, padding: "6px 4px", border: `1px solid ${TOKENS.linea}`, borderRadius: 4, background: plan[idx] ? TOKENS.acentoSuave : "transparent" }}>
+              <option value="">Descanso</option>
+              {tiposEntreno.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Vista: Entrenamientos ----------
+function VistaEntrenamientos({ usuario, datos, tiposEntreno, setTiposEntreno, actualizarDatosUsuario }) {
+  const [form, setForm] = useState({ fecha: formatearISO(new Date()), tipo: tiposEntreno[0] || "", duracion: 30, distancia: "", notas: "" });
+  const [nuevoTipo, setNuevoTipo] = useState("");
+  const [mostrarNuevoTipo, setMostrarNuevoTipo] = useState(false);
+  const registros = [...(datos.registros || [])].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  function añadirRegistro() {
+    if (!form.tipo || !form.fecha) return;
+    const registro = { id: uid(), fecha: form.fecha, tipo: form.tipo, duracion: Number(form.duracion) || 0, distancia: form.distancia ? Number(form.distancia) : null, notas: form.notas };
+    actualizarDatosUsuario(usuario.id, (d) => ({ ...d, registros: [...(d.registros || []), registro] }));
+    setForm({ fecha: form.fecha, tipo: form.tipo, duracion: 30, distancia: "", notas: "" });
+  }
+  function eliminarRegistro(id) { actualizarDatosUsuario(usuario.id, (d) => ({ ...d, registros: (d.registros || []).filter((r) => r.id !== id) })); }
+  function añadirTipo() {
+    const limpio = nuevoTipo.trim();
+    if (limpio && !tiposEntreno.includes(limpio)) { setTiposEntreno((prev) => [...prev, limpio]); setForm((f) => ({ ...f, tipo: limpio })); }
+    setNuevoTipo(""); setMostrarNuevoTipo(false);
+  }
+  return (
+    <div style={{ maxWidth: 820 }}>
+      <Encabezado titulo="Entrenamientos" subtitulo={`Registro de ${usuario.nombre}`} />
+      <Panel style={{ marginBottom: 28 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, alignItems: "end" }}>
+          <CampoTexto tipo="date" label="Fecha" value={form.fecha} onChange={(v) => setForm((f) => ({ ...f, fecha: v }))} />
+          <div>
+            <div style={etiquetaEstilo}>Tipo de entrenamiento</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <select value={form.tipo} onChange={(e) => setForm((f) => ({ ...f, tipo: e.target.value }))} style={inputEstilo}>
+                {tiposEntreno.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <button type="button" onClick={() => setMostrarNuevoTipo((v) => !v)} style={boton.icono} title="Añadir tipo nuevo"><Ic size={14}>＋</Ic></button>
+            </div>
+          </div>
+          <CampoNumero label="Duración (min)" value={form.duracion} onChange={(v) => setForm((f) => ({ ...f, duracion: v }))} />
+          <CampoNumero label="Distancia (km, opcional)" value={form.distancia} onChange={(v) => setForm((f) => ({ ...f, distancia: v }))} step="0.1" />
+          <div style={{ gridColumn: "1 / -1" }} onKeyDown={(e) => { if (e.key === "Enter") añadirRegistro(); }}>
+            <CampoTexto label="Notas (opcional)" value={form.notas} onChange={(v) => setForm((f) => ({ ...f, notas: v }))} />
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <button type="button" onClick={añadirRegistro} style={boton.primario}>Añadir entrenamiento</button>
+          </div>
+        </div>
+        {mostrarNuevoTipo && (
+          <div style={{ display: "flex", gap: 6, marginTop: 12, borderTop: `1px solid ${TOKENS.linea}`, paddingTop: 12 }}>
+            <input autoFocus value={nuevoTipo} onChange={(e) => setNuevoTipo(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") añadirTipo(); }}
+              placeholder="Nuevo tipo de entrenamiento" style={{ ...inputEstilo, flex: 1 }} />
+            <button type="button" onClick={añadirTipo} style={boton.secundario}>Añadir tipo</button>
+          </div>
+        )}
+      </Panel>
+      <div style={{ fontSize: 12, color: TOKENS.tintaSuave, marginBottom: 10 }}>Historial ({registros.length})</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {registros.length === 0 && <div style={{ color: TOKENS.tintaSuave, fontSize: 14 }}>Aún no hay entrenamientos registrados.</div>}
+        {registros.map((r) => (
+          <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 14, background: TOKENS.panel, border: `1px solid ${TOKENS.linea}`, borderRadius: 4, padding: "10px 14px", flexWrap: "wrap" }}>
+            <div className="num" style={{ fontSize: 13, fontWeight: 700, width: 76, flexShrink: 0, color: TOKENS.tintaSuave }}>{formatearCorto(r.fecha)}</div>
+            <div style={{ fontSize: 14, fontWeight: 600, width: 190, flexShrink: 0 }}>{r.tipo}</div>
+            <div style={{ fontSize: 13, color: TOKENS.tintaSuave, width: 90, flexShrink: 0 }}>{r.duracion} min</div>
+            <div style={{ fontSize: 13, color: TOKENS.tintaSuave, width: 80, flexShrink: 0 }}>{r.distancia ? `${r.distancia} km` : ""}</div>
+            <div style={{ fontSize: 13, color: TOKENS.tintaSuave, flex: 1 }}>{r.notas}</div>
+            <button onClick={() => eliminarRegistro(r.id)} style={{ background: "transparent", border: "none", color: TOKENS.tintaSuave, flexShrink: 0 }}><Ic size={14}>🗑</Ic></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Vista: Progreso ----------
+function VistaProgreso({ usuario, datos }) {
+  const registros = datos.registros || [];
+  const pesos = [...(datos.pesos || [])].sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const semanal = useMemo(() => {
+    const mapa = {};
+    for (const r of registros) { const c = claveSemana(r.fecha); if (!mapa[c]) mapa[c] = { semana: c, sesiones: 0, minutos: 0 }; mapa[c].sesiones += 1; mapa[c].minutos += r.duracion; }
+    return Object.values(mapa).sort((a, b) => a.semana.localeCompare(b.semana)).slice(-8).map((s) => ({ ...s, etiqueta: formatearCorto(s.semana) }));
+  }, [registros]);
+  const mensual = useMemo(() => {
+    const mapa = {};
+    for (const r of registros) { const c = claveMes(r.fecha); if (!mapa[c]) mapa[c] = { mes: c, sesiones: 0, minutos: 0 }; mapa[c].sesiones += 1; mapa[c].minutos += r.duracion; }
+    return Object.values(mapa).sort((a, b) => a.mes.localeCompare(b.mes)).slice(-6).map((m) => ({ ...m, etiqueta: nombreMes(m.mes) }));
+  }, [registros]);
+  const pesoDatos = pesos.map((p) => ({ ...p, etiqueta: formatearCorto(p.fecha) }));
+  const totalSesiones = registros.length;
+  const totalMinutos = registros.reduce((s, r) => s + r.duracion, 0);
+  const ultimasCuatro = semanal.slice(-4);
+  const mediaSemanal = ultimasCuatro.length ? Math.round(ultimasCuatro.reduce((s, x) => s + x.sesiones, 0) / ultimasCuatro.length) : 0;
+  if (registros.length === 0) {
+    return (
+      <div style={{ maxWidth: 820 }}>
+        <Encabezado titulo="Progreso" subtitulo={`Estadísticas de ${usuario.nombre}`} />
+        <div style={{ color: TOKENS.tintaSuave, fontSize: 14 }}>Todavía no hay entrenamientos registrados. Añade alguno en la pestaña «Entrenamientos» para ver aquí tus gráficas.</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ maxWidth: 900 }}>
+      <Encabezado titulo="Progreso" subtitulo={`Estadísticas de ${usuario.nombre}`} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 28 }}>
+        <Panel><EtiquetaValor etiqueta="Sesiones totales" valor={totalSesiones} /></Panel>
+        <Panel><EtiquetaValor etiqueta="Minutos totales" valor={totalMinutos} /></Panel>
+        <Panel><EtiquetaValor etiqueta="Media semanal (últimas 4 sem.)" valor={mediaSemanal} sufijo="sesiones" /></Panel>
+      </div>
+      <PanelGrafica titulo="Sesiones por semana (últimas 8)"><GraficaBarras datos={semanal} claveX="etiqueta" claveY="sesiones" color={TOKENS.acento} /></PanelGrafica>
+      <PanelGrafica titulo="Minutos entrenados por mes"><GraficaBarras datos={mensual} claveX="etiqueta" claveY="minutos" color={ZONAS[3].color} /></PanelGrafica>
+      {pesoDatos.length > 1 && <PanelGrafica titulo="Evolución del peso (kg)"><GraficaLineas datos={pesoDatos} claveX="etiqueta" claveY="peso" color={TOKENS.acento} /></PanelGrafica>}
+    </div>
+  );
+}
+
+// ---------- Piezas reutilizables ----------
+function Encabezado({ titulo, subtitulo }) {
+  return (<div style={{ marginBottom: 26 }}><h1 className="num" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 2px" }}>{titulo}</h1><div style={{ fontSize: 14, color: TOKENS.tintaSuave }}>{subtitulo}</div></div>);
+}
+function Panel({ children, style }) { return <div style={{ background: TOKENS.panel, border: `1px solid ${TOKENS.linea}`, borderRadius: 4, padding: 18, ...style }}>{children}</div>; }
+function PanelGrafica({ titulo, children }) {
+  return (<div style={{ background: TOKENS.panel, border: `1px solid ${TOKENS.linea}`, borderRadius: 4, padding: 18, marginBottom: 20 }}><div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{titulo}</div>{children}</div>);
+}
+function EtiquetaValor({ etiqueta, valor, sufijo }) {
+  return (<div><div style={{ fontSize: 12, color: TOKENS.tintaSuave, marginBottom: 6 }}>{etiqueta}</div><div style={{ display: "flex", alignItems: "baseline", gap: 6 }}><span className="num" style={{ fontSize: 36, fontWeight: 700 }}>{valor}</span>{sufijo && <span style={{ fontSize: 12, color: TOKENS.tintaSuave }}>{sufijo}</span>}</div></div>);
+}
+const etiquetaEstilo = { fontSize: 12, color: TOKENS.tintaSuave, marginBottom: 6 };
+const inputEstilo = { width: "100%", padding: "8px 10px", border: `1px solid ${TOKENS.linea}`, borderRadius: 4, fontSize: 14, background: "#fff" };
+function CampoTexto({ label, value, onChange, tipo = "text" }) {
+  return (<div><div style={etiquetaEstilo}>{label}</div><input type={tipo} value={value} onChange={(e) => onChange(e.target.value)} style={inputEstilo} /></div>);
+}
+function CampoNumero({ label, value, onChange, step = "1" }) {
+  return (<div><div style={etiquetaEstilo}>{label}</div><input type="number" step={step} value={value} onChange={(e) => onChange(e.target.value)} style={inputEstilo} /></div>);
+}
+function CampoSelect({ label, value, onChange, opciones }) {
+  return (<div><div style={etiquetaEstilo}>{label}</div><select value={value} onChange={(e) => onChange(e.target.value)} style={inputEstilo}>{opciones.map((o) => <option key={o.v} value={o.v}>{o.t}</option>)}</select></div>);
+}
+const boton = {
+  primario: { background: TOKENS.acento, color: "#fff", border: "none", borderRadius: 4, padding: "10px 18px", fontSize: 14, fontWeight: 600 },
+  secundario: { background: TOKENS.acentoSuave, color: TOKENS.acento, border: "none", borderRadius: 4, padding: "10px 18px", fontSize: 14, fontWeight: 600 },
+  peligro: { background: "transparent", color: ZONAS[4].color, border: `1px solid ${ZONAS[4].color}`, borderRadius: 4, padding: "10px 16px", fontSize: 13, fontWeight: 600 },
+  icono: { background: TOKENS.acentoSuave, color: TOKENS.acento, border: "none", borderRadius: 4, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" },
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<EntrenaApp />);
+</script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
